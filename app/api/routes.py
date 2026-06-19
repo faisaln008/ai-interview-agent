@@ -1,3 +1,4 @@
+import hashlib
 import uuid
 
 from fastapi import APIRouter, Depends
@@ -9,6 +10,13 @@ from app.agents.agent import run_agent
 from app.database import get_db, ConversationLog
 
 router = APIRouter(prefix="/api")
+
+# Simple in-memory cache for repeated identical questions within a session.
+response_cache = {}
+
+
+def get_cache_key(session_id: str, question: str) -> str:
+    return hashlib.md5(f"{session_id}:{question}".encode()).hexdigest()
 
 class AskRequest(BaseModel):
     question: str
@@ -29,9 +37,19 @@ async def ask(request: AskRequest, db: Session = Depends(get_db)):
     recent.reverse()  # oldest -> newest
     history = [{"question": r.question, "answer": r.answer} for r in recent]
 
+    # Return a cached answer immediately for an identical question in this session.
+    cache_key = get_cache_key(session_id, request.question)
+    if cache_key in response_cache:
+        return {
+            "answer": response_cache[cache_key],
+            "question": request.question,
+            "session_id": session_id,
+            "cached": True,
+        }
+
     result = await run_agent(request.question, history)
 
-    # Persist the new exchange.
+    # Persist the new exchange and cache the result.
     log = ConversationLog(
         session_id=session_id,
         question=request.question,
@@ -39,8 +57,14 @@ async def ask(request: AskRequest, db: Session = Depends(get_db)):
     )
     db.add(log)
     db.commit()
+    response_cache[cache_key] = result
 
-    return {"answer": result, "question": request.question, "session_id": session_id}
+    return {
+        "answer": result,
+        "question": request.question,
+        "session_id": session_id,
+        "cached": False,
+    }
 
 @router.get("/history/{session_id}")
 def history(session_id: str, db: Session = Depends(get_db)):
@@ -80,4 +104,15 @@ def sessions(db: Session = Depends(get_db)):
             {"session_id": session_id, "message_count": count}
             for session_id, count in rows
         ]
+    }
+
+@router.get("/metrics")
+def metrics(db: Session = Depends(get_db)):
+    total = db.query(ConversationLog).count()
+    sessions = db.query(ConversationLog.session_id).distinct().count()
+    return {
+        "total_requests": total,
+        "total_sessions": sessions,
+        "cache_size": len(response_cache),
+        "status": "healthy",
     }

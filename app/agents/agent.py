@@ -12,7 +12,7 @@ class AgentState(TypedDict):
     answer: str
     messages: list
 
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0, streaming=True)
 
 def llm_node(state: AgentState) -> AgentState:
     # Build the full message list from prior history plus the current question.
