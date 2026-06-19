@@ -3,4 +3,7 @@ uvicorn[standard]
 langchain
 langchain-openai
 langgraph
+langsmith
 python-dotenv
+sqlalchemy
+psycopg2-binary

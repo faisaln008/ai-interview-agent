@@ -2,17 +2,23 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage, AIMessage
 from langgraph.graph import StateGraph, END
+from langsmith import traceable
 from typing import TypedDict
 
 class AgentState(TypedDict):
     question: str
     answer: str
+    messages: list
 
 llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
 def llm_node(state: AgentState) -> AgentState:
-    response = llm.invoke(state["question"])
+    # Build the full message list from prior history plus the current question.
+    messages = list(state.get("messages", []))
+    messages.append(HumanMessage(content=state["question"]))
+    response = llm.invoke(messages)
     return {"answer": response.content}
 
 def build_graph():
@@ -24,6 +30,13 @@ def build_graph():
 
 agent = build_graph()
 
-async def run_agent(question: str) -> str:
-    result = agent.invoke({"question": question, "answer": ""})
+@traceable(name="run-agent")
+async def run_agent(question: str, history: list = []) -> str:
+    # Convert stored history rows into LangChain message objects.
+    messages = []
+    for entry in history:
+        messages.append(HumanMessage(content=entry["question"]))
+        messages.append(AIMessage(content=entry["answer"]))
+
+    result = agent.invoke({"question": question, "answer": "", "messages": messages})
     return result["answer"]
